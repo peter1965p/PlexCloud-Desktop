@@ -8,7 +8,7 @@ set -euo pipefail
 die() { echo "❌ $*" >&2; exit 1; }
 REPO=peter1965p/PlexCloud-Desktop
 for lib in libwebkit2gtk-4.1.so.0 libayatana-appindicator3.so.1; do
-  ldconfig -p | grep -q "$lib" || die "$lib fehlt. Bitte: sudo pacman -S webkit2gtk-4.1 libayatana-appindicator"
+  ldconfig -p | grep -F "$lib" >/dev/null || die "$lib fehlt. Bitte: sudo pacman -S webkit2gtk-4.1 libayatana-appindicator"
 done
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
