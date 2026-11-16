@@ -9,6 +9,11 @@ import Settings from "./views/Settings.vue";
 const view = ref<View | null>(null);
 const tab = ref<"overview" | "mappings" | "settings">("overview");
 let timer: number | undefined;
+const updating = ref(false);
+async function doUpdate() {
+  updating.value = true;
+  try { await api.installUpdate(); } catch (e) { updating.value = false; alert(String(e)); }
+}
 
 async function refresh() {
   try { view.value = await api.view(); } catch { /* Backend startet noch */ }
@@ -68,8 +73,9 @@ const usage = computed(() => view.value?.status.usage);
     </nav>
     <main class="main">
       <div v-if="view.update" class="update">
-        Neue Version {{ view.update.version }} ist da.
-        <a @click="api.web(view.update.url)">Ansehen</a>
+        <span style="flex: 1">Neue Version {{ view.update.version }} ist da.{{ updating ? " Wird eingespielt, PlexCloud startet gleich neu …" : "" }}</span>
+        <a @click="api.web(view.update.url)">Was ist neu</a>
+        <a v-if="view.update.self_update && !updating" @click="doUpdate">Jetzt aktualisieren</a>
       </div>
       <Overview v-if="tab === 'overview'" :view="view" @changed="refresh" @goto="tab = $event" />
       <Mappings v-else-if="tab === 'mappings'" :view="view" @changed="refresh" />

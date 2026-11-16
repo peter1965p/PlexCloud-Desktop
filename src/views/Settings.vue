@@ -105,8 +105,8 @@ async function logout() {
     <section class="card sec">
       <h2>System</h2>
       <div class="opt">
-        <div style="flex: 1"><div>Nach Updates schauen</div><div class="small muted">neue Versionen von GitHub</div></div>
-        <button class="switch" :class="{ on: autoUpdate }" role="switch" :aria-checked="autoUpdate" aria-label="Nach Updates schauen" @click="autoUpdate = !autoUpdate; save()" />
+        <div style="flex: 1"><div>Automatisch aktualisieren</div><div class="small muted">neue Versionen von GitHub selbst einspielen</div></div>
+        <button class="switch" :class="{ on: autoUpdate }" role="switch" :aria-checked="autoUpdate" aria-label="Automatisch aktualisieren" @click="autoUpdate = !autoUpdate; save()" />
       </div>
       <div class="opt">
         <div style="flex: 1; min-width: 0"><div>Angemeldet</div><div class="small muted">{{ view.profile?.name || view.profile?.email }} · {{ view.profile?.provider }}</div></div>

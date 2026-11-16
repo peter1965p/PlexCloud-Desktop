@@ -5,7 +5,7 @@
 #
 # Vorher in CHANGELOG.md einen Abschnitt "## [0.1.1]" anlegen und committen.
 # Ablauf: Version setzen -> Tests -> Release-Build -> Tarball -> PKGBUILD anpassen ->
-# Commit + Tag -> Push -> GitHub-Release. Die App meldet das Update von selbst.
+# Commit + Tag -> Push -> GitHub-Release. Installierte Apps (~/.local/bin) spielen das Update selbst ein.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 die() { echo "❌ $*" >&2; exit 1; }
@@ -32,7 +32,7 @@ echo "▶ Tests und Release-Build"
 (cd src-tauri && cargo test --lib --quiet)
 npx tauri build --no-bundle
 BIN=src-tauri/target/release/plexcloud-desktop
-"$BIN" --version >/dev/null 2>&1 || true
+[[ "$("$BIN" --version)" == "plexcloud-desktop $VERSION" ]] || die "Programm meldet nicht Version $VERSION."
 
 echo "▶ Paket"
 mkdir -p releases
@@ -44,6 +44,7 @@ OUT="releases/plexcloud-desktop-$VERSION-x86_64.tar.gz"
 tar -C "$STAGE" -czf "$OUT" .
 rm -rf "$STAGE"
 SUM="$(sha256sum "$OUT" | cut -d' ' -f1)"
+echo "$SUM  $(basename "$OUT")" > "$OUT.sha256"
 sed -i "s/^sha256sums=.*/sha256sums=('$SUM')/" packaging/PKGBUILD
 echo "▶ $OUT ($(du -h "$OUT" | cut -f1))"
 
@@ -53,5 +54,5 @@ git tag -a "$TAG" -m "PlexCloud Desktop $VERSION"
 git push -q origin HEAD --follow-tags
 
 echo "▶ GitHub-Release"
-gh release create "$TAG" "$OUT" packaging/PKGBUILD --title "PlexCloud Desktop $VERSION" --notes "$NOTES"
+gh release create "$TAG" "$OUT" "$OUT.sha256" packaging/PKGBUILD scripts/install.sh --title "PlexCloud Desktop $VERSION" --notes "$NOTES"
 echo "✅ PlexCloud Desktop $VERSION ist veröffentlicht."

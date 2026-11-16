@@ -10,3 +10,4 @@ Alle Versionen von PlexCloud für Linux.
 - Monatsordner der Handy-App (Bilder/2026-11) werden zu Jahresordnern (Bilder/2026) zusammengelegt
 - Tray-Symbol für Plasma, Akzentfarbe frei wählbar, Autostart als systemd-Benutzerdienst, Upload-Grenze, Ausnahmen
 - Anmeldung mit Google oder E-Mail über den Browser
+- Aktualisiert sich selbst aus GitHub (Installation in ~/.local/bin, Prüfsumme wird kontrolliert)

@@ -6,6 +6,7 @@ mod config;
 mod engine;
 mod plan;
 mod tray;
+mod update;
 
 use config::{Config, Mapping};
 use engine::Engine;
@@ -19,15 +20,12 @@ pub const REPO: &str = "peter1965p/PlexCloud-Desktop";
 
 pub struct App {
     engine: Arc<Engine>,
+    http: reqwest::Client,
     trigger: mpsc::Sender<()>,
     update: tokio::sync::Mutex<Option<UpdateInfo>>,
 }
 
-#[derive(Serialize, Clone, Debug)]
-pub struct UpdateInfo {
-    version: String,
-    url: String,
-}
+use update::UpdateInfo;
 
 #[derive(Serialize)]
 struct View {
@@ -204,7 +202,7 @@ fn autostart(on: bool) -> anyhow::Result<()> {
         std::fs::create_dir_all(&unit_dir)?;
         std::fs::write(
             &unit,
-            format!("[Unit]\nDescription=PlexCloud Abgleich\nPartOf=graphical-session.target\nAfter=graphical-session.target\n\n[Service]\nExecStart={} --hidden\nRestart=on-failure\nRestartSec=10\n\n[Install]\nWantedBy=graphical-session.target\n", exe.display()),
+            format!("[Unit]\nDescription=PlexCloud Abgleich\nPartOf=graphical-session.target\nAfter=graphical-session.target\n\n[Service]\nExecStart={} --hidden\nRestart=on-failure\nRestartSec=3\nRestartForceExitStatus=75\nSuccessExitStatus=75\n\n[Install]\nWantedBy=graphical-session.target\n", exe.display()),
         )?;
         std::process::Command::new("systemctl").args(["--user", "daemon-reload"]).status()?;
         std::process::Command::new("systemctl").args(["--user", "enable", "plexcloud.service"]).status()?;
@@ -216,16 +214,22 @@ fn autostart(on: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn newer(a: &str, b: &str) -> bool {
-    let p = |s: &str| s.split('.').map(|x| x.parse::<u64>().unwrap_or(0)).collect::<Vec<_>>();
-    p(a) > p(b)
+/// Update jetzt einspielen und neu starten (Knopf in der App oder automatisch)
+async fn apply_update(handle: &AppHandle, http: &reqwest::Client, u: &UpdateInfo) -> anyhow::Result<()> {
+    // nicht mitten in einer Übertragung austauschen
+    let st: State<App> = handle.state();
+    while st.engine.snapshot().await.running {
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    }
+    let exe = update::install(http, u).await?;
+    let hidden = handle.get_webview_window("main").map(|w| !w.is_visible().unwrap_or(false)).unwrap_or(true);
+    update::restart(&exe, hidden)
 }
 
-/// Neueste Version auf GitHub; None, wenn diese aktuell ist
-async fn check_update(http: &reqwest::Client) -> Option<UpdateInfo> {
-    let j: serde_json::Value = http.get(format!("https://api.github.com/repos/{REPO}/releases/latest")).header("User-Agent", "PlexCloud-Linux").send().await.ok()?.json().await.ok()?;
-    let tag = j["tag_name"].as_str()?.trim_start_matches('v').to_string();
-    newer(&tag, env!("CARGO_PKG_VERSION")).then(|| UpdateInfo { version: tag, url: j["html_url"].as_str().unwrap_or("").to_string() })
+#[tauri::command]
+async fn install_update(handle: AppHandle, app: State<'_, App>) -> Result<(), String> {
+    let u = app.update.lock().await.clone().ok_or("Kein Update vorhanden")?;
+    apply_update(&handle, &app.http, &u).await.map_err(err)
 }
 
 /// Lokale Ordner beobachten: Änderung → nach 5 s Ruhe abgleichen
@@ -254,6 +258,10 @@ fn watch(trigger: mpsc::Sender<()>) -> Option<notify::RecommendedWatcher> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    if std::env::args().any(|a| a == "--version") {
+        println!("plexcloud-desktop {}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
     let hidden = std::env::args().any(|a| a == "--hidden");
     let http = reqwest::Client::builder().connect_timeout(Duration::from_secs(15)).build().expect("HTTP-Client");
     let auth = Arc::new(auth::Auth::new(http.clone()));
@@ -270,8 +278,8 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_opener::init())
-        .manage(App { engine: engine.clone(), trigger: trigger.clone(), update: tokio::sync::Mutex::new(None) })
-        .invoke_handler(tauri::generate_handler![view, login, logout, sync_now, set_paused, approve, allow_deletes, set_accent, save_settings, set_mapping, remove_mapping])
+        .manage(App { engine: engine.clone(), http: http.clone(), trigger: trigger.clone(), update: tokio::sync::Mutex::new(None) })
+        .invoke_handler(tauri::generate_handler![view, login, logout, sync_now, set_paused, approve, allow_deletes, set_accent, save_settings, set_mapping, remove_mapping, install_update])
         .setup(move |app| {
             // erster Start: Einstellungen anlegen und Autostart einrichten
             if !config::dir().join("config.json").exists() {
@@ -325,10 +333,16 @@ pub fn run() {
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 loop {
-                    if Config::load().auto_update {
-                        let u = check_update(&http).await;
+                    let u = update::check(&http).await;
+                    {
                         let st: State<App> = handle.state();
-                        *st.update.lock().await = u;
+                        *st.update.lock().await = u.clone();
+                    }
+                    // automatisch einspielen, wenn erlaubt und das Programm dem Benutzer gehört
+                    if let Some(u) = u.filter(|u| u.self_update && Config::load().auto_update) {
+                        if let Err(e) = apply_update(&handle, &http, &u).await {
+                            eprintln!("Update fehlgeschlagen: {e}");
+                        }
                     }
                     tokio::time::sleep(Duration::from_secs(6 * 3600)).await;
                 }
@@ -349,9 +363,7 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn version_compare() {
-        assert!(super::newer("0.1.10", "0.1.9"));
-        assert!(!super::newer("0.1.0", "0.1.0"));
+    fn expand_home() {
         assert!(super::expand("~/Musik").ends_with("Musik"));
     }
 }

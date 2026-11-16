@@ -13,7 +13,7 @@ export interface Status {
 export interface Mapping { remote: string; local: string; enabled: boolean; approved: boolean }
 export interface Config { accent: string; mappings: Mapping[]; paused: boolean; upload_limit: number; excludes: string[]; autostart: boolean; auto_update: boolean; interval: number }
 export interface Profile { name: string; email: string; picture: string | null; provider: string }
-export interface View { status: Status; profile: Profile | null; config: Config; version: string; update: { version: string; url: string } | null }
+export interface View { status: Status; profile: Profile | null; config: Config; version: string; update: { version: string; url: string; self_update: boolean } | null }
 
 export const api = {
   view: () => invoke<View>("view"),
@@ -27,6 +27,7 @@ export const api = {
   saveSettings: (s: { upload_limit: number; excludes: string[]; autostart: boolean; auto_update: boolean }) => invoke<void>("save_settings", { s }),
   setMapping: (remote: string, local: string, enabled: boolean) => invoke<void>("set_mapping", { remote, local, enabled }),
   removeMapping: (remote: string) => invoke<void>("remove_mapping", { remote }),
+  installUpdate: () => invoke<void>("install_update"),
   open: (path: string) => openPath(path),
   web: (url: string) => openUrl(url),
 };

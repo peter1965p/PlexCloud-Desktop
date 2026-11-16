@@ -13,10 +13,12 @@ Weitere Cloud-Ordner lassen sich beliebigen Ordnern zuordnen (z. B. `/Musik ⇄ 
 ## Installieren (Arch / CachyOS)
 
 ```sh
-cd packaging && makepkg -si
+sudo pacman -S --needed webkit2gtk-4.1 libayatana-appindicator
+curl -fsSL https://github.com/peter1965p/PlexCloud-Desktop/releases/latest/download/install.sh | bash
 ```
 
-Braucht `webkit2gtk-4.1`, `gtk3` und `libayatana-appindicator` (Tray-Symbol in Plasma).
+Installiert nach `~/.local/bin` (ohne root). Von dort **aktualisiert sich die App selbst** aus den GitHub-Releases: Prüfsumme kontrollieren, austauschen, neu starten.
+Alternativ systemweit über `packaging/PKGBUILD` (`makepkg -si`); dann meldet die App neue Versionen nur.
 
 ## Entwickeln
 
