@@ -4,7 +4,7 @@ import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 export interface Summary { uploads: number; upload_bytes: number; downloads: number; download_bytes: number; deletes: number; conflicts: number }
 export interface MappingStatus { remote: string; local: string; enabled: boolean; approved: boolean; state: string; message: string; pending: Summary }
 export interface Recent { name: string; dir: "up" | "down" | "trash" | "conflict"; folder: string; at: number }
-export interface Current { name: string; dir: string; path: string; done: number; total: number }
+export interface Current { remote: string; name: string; dir: string; path: string; done: number; total: number }
 export interface Status {
   signed_in: boolean; paused: boolean; running: boolean; online: boolean; error: string; last_sync: number
   mappings: MappingStatus[]; current: Current | null; recent: Recent[]

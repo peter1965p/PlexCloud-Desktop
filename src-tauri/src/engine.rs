@@ -44,6 +44,8 @@ pub struct Recent {
 
 #[derive(Serialize, Clone, Debug, Default)]
 pub struct Current {
+    /// Cloud-Ordner, zu dem die Übertragung gehört (nur diese Kachel zeigt Fortschritt)
+    pub remote: String,
     pub name: String,
     pub dir: String,
     pub path: String,
@@ -277,15 +279,38 @@ impl Engine {
                 .filter(|i| i.folder() && (i.parent_id == ROOT || i.parent_id.is_empty()) && !cfg.mappings.iter().any(|m| m.remote.eq_ignore_ascii_case(&i.name)))
                 .map(|i| i.name.clone())
                 .collect();
-            s.mappings = cfg.mappings.iter().map(|m| MappingStatus { remote: m.remote.clone(), local: m.local.display().to_string(), enabled: m.enabled, approved: m.approved, state: if m.enabled { "arbeitet".into() } else { "aus".into() }, ..Default::default() }).collect();
+            // bisherigen Stand je Ordner behalten (z. B. „wartet“ mit Startknopf), bis der Ordner selbst dran ist
+            let old = std::mem::take(&mut s.mappings);
+            s.mappings = cfg
+                .mappings
+                .iter()
+                .map(|m| {
+                    let prev = old.iter().find(|o| o.remote.eq_ignore_ascii_case(&m.remote) && o.local == m.local.display().to_string());
+                    MappingStatus {
+                        remote: m.remote.clone(),
+                        local: m.local.display().to_string(),
+                        enabled: m.enabled,
+                        approved: m.approved,
+                        state: if !m.enabled { "aus".into() } else { prev.map(|p| p.state.clone()).filter(|st| st != "aus").unwrap_or_else(|| "prüft".into()) },
+                        message: prev.map(|p| p.message.clone()).unwrap_or_default(),
+                        pending: prev.map(|p| p.pending.clone()).unwrap_or_default(),
+                    }
+                })
+                .collect();
         }
         let mut moved = false;
         for (n, m) in cfg.mappings.iter().enumerate() {
             if !m.enabled {
                 continue;
             }
+            if m.approved {
+                self.status.lock().await.mappings[n].state = "arbeitet".into();
+            }
             let res = self.sync_mapping(m, &tree, cfg).await;
             let mut s = self.status.lock().await;
+            if res.as_ref().map(|r| r.0 == "synchron").unwrap_or(false) {
+                s.last_sync = now();
+            }
             let ms = &mut s.mappings[n];
             match res {
                 Ok((st, msg, pending, did)) => {
@@ -493,7 +518,7 @@ impl Engine {
                 Ok(true)
             }
             Action::Download { rel, item_id, size } => {
-                self.set_current(Some(Current { name: name_of(rel), dir: "down".into(), path: format!("/{}/{} → {}", m.remote, parent_of(rel), m.local.join(parent_of(rel)).display()), done: 0, total: *size })).await;
+                self.set_current(Some(Current { remote: m.remote.clone(), name: name_of(rel), dir: "down".into(), path: format!("/{}/{} → {}", m.remote, parent_of(rel), m.local.join(parent_of(rel)).display()), done: 0, total: *size })).await;
                 let p = path(rel);
                 if p.exists() {
                     // ältere lokale Fassung nicht überschreiben, sondern in den Papierkorb
@@ -508,7 +533,7 @@ impl Engine {
             Action::Conflict { rel, item_id, size } => {
                 let copy = plan::conflict_name(rel, &today());
                 std::fs::rename(path(rel), path(&copy))?;
-                self.set_current(Some(Current { name: name_of(rel), dir: "down".into(), path: format!("/{}/{}", m.remote, parent_of(rel)), done: 0, total: *size })).await;
+                self.set_current(Some(Current { remote: m.remote.clone(), name: name_of(rel), dir: "down".into(), path: format!("/{}/{}", m.remote, parent_of(rel)), done: 0, total: *size })).await;
                 self.api.download(item_id, &path(rel), &self.progress).await?;
                 let r = remote.get(&plan::key(rel)).ok_or_else(|| anyhow::anyhow!("weg"))?;
                 record_local(state, rel, &r.item_id, &r.updated, false)?;
@@ -518,7 +543,7 @@ impl Engine {
             Action::Upload { rel, size, replace } => {
                 let p = path(rel);
                 let before = std::fs::metadata(&p)?;
-                self.set_current(Some(Current { name: name_of(rel), dir: "up".into(), path: format!("{} → /{}/{}", shorten(&m.local.join(parent_of(rel))), m.remote, parent_of(rel)), done: 0, total: *size })).await;
+                self.set_current(Some(Current { remote: m.remote.clone(), name: name_of(rel), dir: "up".into(), path: format!("{} → /{}/{}", shorten(&m.local.join(parent_of(rel))), m.remote, parent_of(rel)), done: 0, total: *size })).await;
                 let parent = self.ensure_remote(&parent_of(rel), folders).await?;
                 self.api.upload(&p, &name_of(rel), &parent, replace.as_deref(), cfg.upload_limit, &self.progress).await?;
                 // während des Uploads geändert: Stand nicht merken, nächster Lauf lädt die neue Fassung

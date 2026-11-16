@@ -26,13 +26,14 @@ const ICONS: Record<string, { color: string; path: string }> = {
 const icon = (r: string) => ICONS[r.toLowerCase()] ?? { color: "var(--muted)", path: '<path d="M3 7h6l2 2h10v10H3z"/>' };
 
 function stateLabel(m: MappingStatus) {
-  if (s.value.current && s.value.running && m.state === "arbeitet") return { text: s.value.current.dir === "up" ? `↑ ${pct.value} %` : `↓ ${pct.value} %`, color: "var(--accent)" };
+  if (s.value.current && s.value.current.remote === m.remote) return { text: s.value.current.dir === "up" ? `↑ ${pct.value} %` : `↓ ${pct.value} %`, color: "var(--accent)" };
   switch (m.state) {
     case "synchron": return { text: "synchron", color: "var(--ok)" };
     case "wartet": return { text: "wartet auf dich", color: "var(--accent)" };
     case "löschstopp": return { text: "Löschstopp", color: "var(--bad)" };
     case "fehler": return { text: "Fehler", color: "var(--bad)" };
     case "aus": return { text: "aus", color: "var(--muted)" };
+    case "arbeitet": return { text: "gleicht ab …", color: "var(--accent)" };
     default: return { text: "prüft …", color: "var(--muted)" };
   }
 }

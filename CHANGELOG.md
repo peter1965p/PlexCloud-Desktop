@@ -5,6 +5,8 @@ Alle Versionen von PlexCloud für Linux.
 ## [0.1.1] - 2026-11-16
 
 - Weniger Speicher im Hintergrund: Beim Schließen des Fensters wird die Oberfläche ganz beendet und erst beim Öffnen neu geladen. Im Tray läuft nur noch der Abgleich
+- Behoben: Während eines Laufs zeigten alle Ordner den Fortschritt der gerade übertragenen Datei, und der Startknopf für noch nicht freigegebene Ordner verschwand. Jetzt zeigt nur der aktive Ordner Fortschritt, die anderen behalten ihren Stand
+- „Letzter Abgleich“ zählt ab dem ersten fertigen Ordner, nicht erst nach dem ganzen Lauf
 - Installationsskript: Prüfung der Bibliotheken korrigiert
 
 ## [0.1.0] - 2026-11-16
