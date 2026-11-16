@@ -60,11 +60,7 @@ pub fn cloud(accent: &str, paused: bool, error: bool) -> Image<'static> {
 }
 
 fn show(app: &AppHandle) {
-    if let Some(w) = app.get_webview_window("main") {
-        let _ = w.show();
-        let _ = w.unminimize();
-        let _ = w.set_focus();
-    }
+    crate::show_main(app);
 }
 
 fn open_path(app: &AppHandle, p: &std::path::Path) {

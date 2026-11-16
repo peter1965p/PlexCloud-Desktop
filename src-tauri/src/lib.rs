@@ -61,10 +61,7 @@ async fn login(handle: AppHandle, app: State<'_, App>, provider: String) -> Resu
         })
         .await
         .map_err(err)?;
-    if let Some(w) = handle.get_webview_window("main") {
-        let _ = w.show();
-        let _ = w.set_focus();
-    }
+    show_main(&handle);
     let _ = app.trigger.try_send(());
     tray::refresh(&handle);
     Ok(p)
@@ -214,6 +211,20 @@ fn autostart(on: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Fenster zeigen; ist es geschlossen, die Oberfläche neu erzeugen
+pub fn show_main(app: &AppHandle) {
+    let w = match app.get_webview_window("main") {
+        Some(w) => w,
+        None => match app.config().app.windows.first().map(|c| tauri::WebviewWindowBuilder::from_config(app, c).and_then(|b| b.build())) {
+            Some(Ok(w)) => w,
+            _ => return,
+        },
+    };
+    let _ = w.show();
+    let _ = w.unminimize();
+    let _ = w.set_focus();
+}
+
 /// Update jetzt einspielen und neu starten (Knopf in der App oder automatisch)
 async fn apply_update(handle: &AppHandle, http: &reqwest::Client, u: &UpdateInfo) -> anyhow::Result<()> {
     // nicht mitten in einer Übertragung austauschen
@@ -222,7 +233,7 @@ async fn apply_update(handle: &AppHandle, http: &reqwest::Client, u: &UpdateInfo
         tokio::time::sleep(Duration::from_secs(5)).await;
     }
     let exe = update::install(http, u).await?;
-    let hidden = handle.get_webview_window("main").map(|w| !w.is_visible().unwrap_or(false)).unwrap_or(true);
+    let hidden = handle.get_webview_window("main").is_none();
     update::restart(&exe, hidden)
 }
 
@@ -270,13 +281,7 @@ pub fn run() {
     let rx = std::sync::Mutex::new(Some(rx));
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            if let Some(w) = app.get_webview_window("main") {
-                let _ = w.show();
-                let _ = w.unminimize();
-                let _ = w.set_focus();
-            }
-        }))
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_main(app)))
         .plugin(tauri_plugin_opener::init())
         .manage(App { engine: engine.clone(), http: http.clone(), trigger: trigger.clone(), update: tokio::sync::Mutex::new(None) })
         .invoke_handler(tauri::generate_handler![view, login, logout, sync_now, set_paused, approve, allow_deletes, set_accent, save_settings, set_mapping, remove_mapping, install_update])
@@ -290,10 +295,8 @@ pub fn run() {
                 }
             }
             tray::create(app.handle())?;
-            if let Some(w) = app.get_webview_window("main") {
-                if !hidden {
-                    let _ = w.show();
-                }
+            if !hidden {
+                show_main(app.handle());
             }
 
             let handle = app.handle().clone();
@@ -349,15 +352,15 @@ pub fn run() {
             });
             Ok(())
         })
-        .on_window_event(|w, e| {
-            // Schließen = ins Tray, der Abgleich läuft weiter
-            if let tauri::WindowEvent::CloseRequested { api, .. } = e {
-                let _ = w.hide();
-                api.prevent_close();
+        .build(tauri::generate_context!())
+        .expect("PlexCloud konnte nicht starten")
+        .run(|_app, e| {
+            // Fenster zu = Oberfläche weg (spart den Speicher von WebKit), App und Abgleich laufen im Tray weiter.
+            // Beenden nur über das Tray-Menü (exit mit Code).
+            if let tauri::RunEvent::ExitRequested { api, code: None, .. } = e {
+                api.prevent_exit();
             }
-        })
-        .run(tauri::generate_context!())
-        .expect("PlexCloud konnte nicht starten");
+        });
 }
 
 #[cfg(test)]
