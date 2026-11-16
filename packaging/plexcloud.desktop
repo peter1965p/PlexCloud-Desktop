@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=PlexCloud
+GenericName=Cloud-Abgleich
+Comment=Bilder, Videos und Dokumente aus PlexCloud in den echten Systemordnern
+Exec=plexcloud-desktop
+Icon=plexcloud
+Terminal=false
+Categories=Network;FileTransfer;Utility;
+Keywords=cloud;sync;plexora;abgleich;
+StartupWMClass=plexcloud-desktop

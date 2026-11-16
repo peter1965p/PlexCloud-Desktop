@@ -1,0 +1,21 @@
+# Maintainer: Peter Päffgen
+# Fertiges Programm aus dem GitHub-Release; bauen mit: cd packaging && makepkg -si
+pkgname=plexcloud-desktop-bin
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="PlexCloud für Linux: Cloud-Ordner in den echten Systemordnern (~/Bilder, ~/Videos, ~/Dokumente)"
+arch=('x86_64')
+url="https://github.com/peter1965p/PlexCloud-Desktop"
+license=('MIT')
+depends=('webkit2gtk-4.1' 'gtk3' 'libayatana-appindicator' 'xdg-user-dirs' 'xdg-utils')
+provides=('plexcloud-desktop')
+conflicts=('plexcloud-desktop')
+source=("$url/releases/download/v$pkgver/plexcloud-desktop-$pkgver-x86_64.tar.gz")
+sha256sums=('SKIP')
+
+package() {
+  install -Dm755 plexcloud-desktop "$pkgdir/usr/bin/plexcloud-desktop"
+  install -Dm644 plexcloud.desktop "$pkgdir/usr/share/applications/plexcloud.desktop"
+  install -Dm644 plexcloud.png "$pkgdir/usr/share/icons/hicolor/512x512/apps/plexcloud.png"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

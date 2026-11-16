@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Hauptfenster: Befehle der App, Links und Ordner im Home öffnen",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "opener:default",
+    { "identifier": "opener:allow-open-path", "allow": [{ "path": "$HOME" }, { "path": "$HOME/**" }] }
+  ]
+}

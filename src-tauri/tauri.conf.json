@@ -1,0 +1,40 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "PlexCloud",
+  "version": "0.1.0",
+  "identifier": "eu.plexora.plexcloud",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "PlexCloud",
+        "label": "main",
+        "visible": false,
+        "minWidth": 900,
+        "minHeight": 600,
+        "width": 1120,
+        "height": 720
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' https://*.googleusercontent.com https: data:; style-src 'self' 'unsafe-inline'; connect-src ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": false,
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.png"
+    ],
+    "category": "Utility",
+    "shortDescription": "PlexCloud-Abgleich für Linux",
+    "longDescription": "Bilder, Videos und Dokumente aus PlexCloud in den echten Systemordnern."
+  }
+}

@@ -1,0 +1,45 @@
+[package]
+name = "plexcloud-desktop"
+version = "0.1.0"
+description = "PlexCloud für Linux: Cloud-Ordner in den echten Systemordnern"
+authors = ["Peter Päffgen"]
+license = "MIT"
+edition = "2021"
+
+[lib]
+name = "plexcloud_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-opener = "2"
+tauri-plugin-single-instance = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "fs", "time", "sync"] }
+tokio-util = { version = "0.7", features = ["io"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+futures-util = "0.3"
+sha2 = "0.10"
+base64 = "0.22"
+rand = "0.8"
+url = "2"
+dirs = "5"
+walkdir = "2"
+notify = "6"
+trash = "5"
+mime_guess = "2"
+anyhow = "1"
+filetime = "0.2"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+opt-level = "s"
