@@ -96,14 +96,29 @@ fn extract_binary(tgz: &[u8]) -> anyhow::Result<Vec<u8>> {
     anyhow::bail!("Programm nicht im Paket gefunden")
 }
 
+/// Läuft dieser Prozess als unser systemd-Dienst? (INVOCATION_ID allein reicht nicht: auch Terminals und Startmenü-Starts haben sie)
+pub fn under_service() -> bool {
+    std::fs::read_to_string("/proc/self/cgroup").map(|c| c.lines().any(|l| l.ends_with("/plexcloud.service"))).unwrap_or(false)
+}
+
 /// Neu starten: unter systemd mit Code 75 beenden (systemd startet neu), sonst neuen Prozess starten
 pub fn restart(exe: &Path, hidden: bool) -> ! {
-    if std::env::var_os("INVOCATION_ID").is_none() {
-        let mut c = std::process::Command::new(exe);
-        if hidden {
-            c.arg("--hidden");
-        }
-        let _ = c.spawn();
+    if !under_service() {
+        // kurz warten, bis dieser Prozess weg ist: sonst hält die neue Instanz ihn für schon laufend und beendet sich
+        use std::os::unix::process::CommandExt;
+        // eigene Sitzung (setsid), damit der Neustart das Ende dieses Prozesses überlebt
+        let r = std::process::Command::new("setsid")
+            .arg("-f")
+            .arg("sh")
+            .arg("-c")
+            .arg(if hidden { "sleep 1; exec \"$0\" --hidden" } else { "sleep 1; exec \"$0\"" })
+            .arg(exe)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .process_group(0)
+            .status();
+        eprintln!("PlexCloud: Neustart angestoßen ({r:?})");
         std::process::exit(0);
     }
     std::process::exit(RESTART_CODE)
@@ -112,6 +127,11 @@ pub fn restart(exe: &Path, hidden: bool) -> ! {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn not_a_service_in_tests() {
+        assert!(!under_service());
+    }
 
     #[test]
     fn version_compare() {

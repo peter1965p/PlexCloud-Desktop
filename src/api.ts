@@ -7,7 +7,7 @@ export interface Recent { name: string; dir: "up" | "down" | "trash" | "conflict
 export interface Current { remote: string; name: string; dir: string; path: string; done: number; total: number }
 export interface Status {
   signed_in: boolean; paused: boolean; running: boolean; online: boolean; error: string; last_sync: number
-  mappings: MappingStatus[]; current: Current | null; recent: Recent[]
+  mappings: MappingStatus[]; current: Current | null; parallel: number; recent: Recent[]
   usage: { used: number; limit: number | null; plan: string } | null; unmapped: string[]
 }
 export interface Mapping { remote: string; local: string; enabled: boolean; approved: boolean }

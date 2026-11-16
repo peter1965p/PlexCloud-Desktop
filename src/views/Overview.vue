@@ -33,6 +33,7 @@ function stateLabel(m: MappingStatus) {
     case "löschstopp": return { text: "Löschstopp", color: "var(--bad)" };
     case "fehler": return { text: "Fehler", color: "var(--bad)" };
     case "aus": return { text: "aus", color: "var(--muted)" };
+    case "pausiert": return { text: "pausiert", color: "var(--muted)" };
     case "arbeitet": return { text: "gleicht ab …", color: "var(--accent)" };
     default: return { text: "prüft …", color: "var(--muted)" };
   }
@@ -118,7 +119,7 @@ const DIRS: Record<string, { sign: string; color: string; label: string }> = {
     <div v-if="s.current" class="row">
       <span class="sign" :style="{ color: s.current.dir === 'up' ? 'var(--accent)' : 'var(--blue)' }">{{ s.current.dir === "up" ? "↑" : "↓" }}</span>
       <div style="flex: 1; min-width: 0">
-        <div class="ellipsis">{{ s.current.name }}</div>
+        <div class="ellipsis">{{ s.current.name }}<span v-if="s.parallel > 1" class="muted small"> · und {{ s.parallel - 1 }} weitere gleichzeitig</span></div>
         <div class="bar" style="margin-top: 6px"><div :style="{ width: pct + '%' }" /></div>
       </div>
       <span class="mono small muted right">{{ bytes(s.current.done) }} / {{ bytes(s.current.total) }}<br />{{ home(s.current.path) }}</span>

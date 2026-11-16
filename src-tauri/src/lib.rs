@@ -16,6 +16,9 @@ use std::time::Duration;
 use tauri::{AppHandle, Manager, State};
 use tokio::sync::mpsc;
 
+/// Fenster wurde geschlossen: sobald nichts übertragen wird, leise neu starten (gibt den WebKit-Speicher frei)
+static SHRINK_AT: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+
 pub const REPO: &str = "peter1965p/PlexCloud-Desktop";
 
 pub struct App {
@@ -213,6 +216,7 @@ fn autostart(on: bool) -> anyhow::Result<()> {
 
 /// Fenster zeigen; ist es geschlossen, die Oberfläche neu erzeugen
 pub fn show_main(app: &AppHandle) {
+    *SHRINK_AT.lock().unwrap() = None;
     let w = match app.get_webview_window("main") {
         Some(w) => w,
         None => match app.config().app.windows.first().map(|c| tauri::WebviewWindowBuilder::from_config(app, c).and_then(|b| b.build())) {
@@ -327,8 +331,16 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 loop {
                     tokio::time::sleep(Duration::from_secs(2)).await;
-                    if eng.snapshot().await.running {
+                    let running = eng.snapshot().await.running;
+                    if running {
                         tray::refresh(&handle);
+                    }
+                    // 30 s nach dem Schließen und nicht mitten in einer Übertragung: schlank neu starten
+                    let due = SHRINK_AT.lock().unwrap().map(|t| t.elapsed() > Duration::from_secs(30)).unwrap_or(false);
+                    if due && !running && handle.get_webview_window("main").is_none() {
+                        if let Ok(exe) = std::env::current_exe() {
+                            update::restart(&exe, true);
+                        }
                     }
                 }
             });
@@ -351,6 +363,13 @@ pub fn run() {
                 }
             });
             Ok(())
+        })
+        .on_window_event(|w, e| {
+            if let tauri::WindowEvent::Destroyed = e {
+                if w.label() == "main" {
+                    *SHRINK_AT.lock().unwrap() = Some(std::time::Instant::now());
+                }
+            }
         })
         .build(tauri::generate_context!())
         .expect("PlexCloud konnte nicht starten")

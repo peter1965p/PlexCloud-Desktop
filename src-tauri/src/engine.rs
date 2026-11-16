@@ -9,7 +9,15 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use futures_util::StreamExt;
 use tokio::sync::Mutex;
+
+/// gleichzeitige Übertragungen
+const PARALLEL: usize = 4;
+
+fn is_transfer(a: &Action) -> bool {
+    matches!(a, Action::Upload { .. } | Action::Download { .. } | Action::Conflict { .. })
+}
 
 #[derive(Serialize, Clone, Debug, Default)]
 pub struct Summary {
@@ -63,6 +71,8 @@ pub struct Status {
     pub last_sync: u64,
     pub mappings: Vec<MappingStatus>,
     pub current: Option<Current>,
+    /// wie viele Übertragungen gerade gleichzeitig laufen
+    pub parallel: usize,
     pub recent: Vec<Recent>,
     pub usage: Option<Usage>,
     /// Ordner im Stamm der Cloud, die noch nicht verbunden sind
@@ -72,7 +82,9 @@ pub struct Status {
 pub struct Engine {
     pub api: Arc<Api>,
     pub status: Mutex<Status>,
-    pub progress: Arc<Progress>,
+    /// laufende Übertragungen mit eigenem Fortschritt
+    active: Mutex<Vec<(u64, Current, Arc<Progress>)>>,
+    next_id: std::sync::atomic::AtomicU64,
     run_lock: Mutex<()>,
     /// Löschungen über der Sicherungsgrenze einmal erlauben (je Cloud-Ordner)
     pub allow_deletes: Mutex<Vec<String>>,
@@ -211,11 +223,19 @@ fn today() -> String {
 
 impl Engine {
     pub fn new(api: Arc<Api>) -> Engine {
-        Engine { api, status: Mutex::new(Status::default()), progress: Arc::new(Progress::default()), run_lock: Mutex::new(()), allow_deletes: Mutex::new(Vec::new()) }
+        Engine { api, status: Mutex::new(Status::default()), active: Mutex::new(Vec::new()), next_id: Default::default(), run_lock: Mutex::new(()), allow_deletes: Mutex::new(Vec::new()) }
     }
 
-    async fn set_current(&self, c: Option<Current>) {
-        self.status.lock().await.current = c;
+    async fn begin(&self, c: Current) -> (u64, Arc<Progress>) {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let p = Arc::new(Progress::default());
+        p.total.store(c.total, Ordering::Relaxed);
+        self.active.lock().await.push((id, c, p.clone()));
+        (id, p)
+    }
+
+    async fn end(&self, id: u64) {
+        self.active.lock().await.retain(|(i, _, _)| *i != id);
     }
 
     async fn push_recent(&self, name: &str, dir: &str, folder: &str) {
@@ -226,10 +246,10 @@ impl Engine {
 
     pub async fn snapshot(&self) -> Status {
         let mut s = self.status.lock().await.clone();
-        if let Some(c) = s.current.as_mut() {
-            c.done = self.progress.done.load(Ordering::Relaxed);
-            c.total = self.progress.total.load(Ordering::Relaxed).max(c.total);
-        }
+        let active = self.active.lock().await;
+        s.parallel = active.len();
+        // angezeigt wird die größte laufende Übertragung
+        s.current = active.iter().max_by_key(|(_, c, _)| c.total).map(|(_, c, p)| Current { done: p.done.load(Ordering::Relaxed), total: p.total.load(Ordering::Relaxed).max(c.total), ..c.clone() });
         s
     }
 
@@ -242,6 +262,14 @@ impl Engine {
             s.paused = cfg.paused;
             s.signed_in = self.api.auth.signed_in().await;
             if !s.signed_in || cfg.paused {
+                // Ordner trotzdem anzeigen (nach einem Neustart in der Pause sonst „0 Ordner“)
+                if s.mappings.is_empty() {
+                    s.mappings = cfg
+                        .mappings
+                        .iter()
+                        .map(|m| MappingStatus { remote: m.remote.clone(), local: m.local.display().to_string(), enabled: m.enabled, approved: m.approved, state: if !m.enabled { "aus".into() } else { "pausiert".into() }, ..Default::default() })
+                        .collect();
+                }
                 return Ok(false);
             }
             s.running = true;
@@ -251,6 +279,7 @@ impl Engine {
         let mut s = self.status.lock().await;
         s.running = false;
         s.current = None;
+        self.active.lock().await.clear();
         match &r {
             Ok(_) => {
                 s.online = true;
@@ -415,21 +444,76 @@ impl Engine {
         });
         let remote_by_key: HashMap<String, &Remote> = remote.iter().map(|r| (plan::key(&r.rel), r)).collect();
 
-        for a in &actions {
+        for a in actions.iter().filter(|a| !is_transfer(a)) {
             if Config::load().paused {
                 break;
             }
-            let r = self.apply(a, m, &top_id, &mut folders, &remote_by_key, &mut state, cfg).await;
-            match r {
+            match self.apply(a, m, &top_id, &mut folders, &remote_by_key, &mut state, cfg).await {
                 Ok(moved) => did |= moved,
                 Err(e) => {
                     errors += 1;
                     last_err = e.to_string();
                 }
             }
-            // Stand regelmäßig sichern, damit ein Abbruch nichts doppelt macht
-            save_state(&m.remote, &state)?;
         }
+        save_state(&m.remote, &state)?;
+
+        // Übertragungen: Zielordner vorher anlegen, dann bis zu PARALLEL gleichzeitig
+        let mut parents: HashMap<String, String> = HashMap::new();
+        for a in actions.iter().filter(|a| matches!(a, Action::Upload { .. })) {
+            let Action::Upload { rel, .. } = a else { continue };
+            let pr = rel.rfind('/').map(|i| rel[..i].to_string()).unwrap_or_default();
+            if !parents.contains_key(&pr) {
+                match self.ensure_remote(&pr, &mut folders).await {
+                    Ok(id) => {
+                        parents.insert(pr, id);
+                    }
+                    Err(e) => {
+                        errors += 1;
+                        last_err = e.to_string();
+                    }
+                }
+            }
+        }
+        let limit = if cfg.upload_limit > 0 { (cfg.upload_limit / PARALLEL as u64).max(1) } else { 0 };
+        let transfers: Vec<Action> = actions.iter().filter(|a| is_transfer(a)).cloned().collect();
+        let parents_ref = &parents;
+        let remote_ref = &remote_by_key;
+        let jobs = transfers.into_iter().map(move |a: Action| async move {
+            if Config::load().paused {
+                return (a, Ok(None), true);
+            }
+            let r = self.transfer(&a, m, parents_ref, remote_ref, limit).await;
+            (a, r, false)
+        });
+        let mut stream = futures_util::stream::iter(jobs).buffer_unordered(PARALLEL);
+        let mut since_save = 0usize;
+        while let Some((a, r, skipped)) = stream.next().await {
+            if skipped {
+                continue;
+            }
+            match r {
+                Ok(entry) => {
+                    did = true;
+                    if let Some(e) = entry {
+                        state.insert(plan::key(&e.rel), e);
+                    }
+                    let _ = a;
+                }
+                Err(e) => {
+                    errors += 1;
+                    last_err = e.to_string();
+                }
+            }
+            // Stand regelmäßig sichern, damit ein Abbruch nichts doppelt macht
+            since_save += 1;
+            if since_save >= 10 {
+                save_state(&m.remote, &state)?;
+                since_save = 0;
+            }
+        }
+        drop(stream);
+        save_state(&m.remote, &state)?;
         // Stand der hochgeladenen Dateien aus der Cloud nachtragen (itemId, updatedAt)
         if actions.iter().any(|a| matches!(a, Action::Upload { .. } | Action::MkdirRemote { .. } | Action::Conflict { .. })) {
             let (tree2, _) = self.api.tree().await?;
@@ -468,10 +552,9 @@ impl Engine {
     }
 
     #[allow(clippy::too_many_arguments)]
-    async fn apply(&self, a: &Action, m: &Mapping, _top: &str, folders: &mut HashMap<String, String>, remote: &HashMap<String, &Remote>, state: &mut BTreeMap<String, Entry>, cfg: &Config) -> anyhow::Result<bool> {
+    async fn apply(&self, a: &Action, m: &Mapping, _top: &str, folders: &mut HashMap<String, String>, remote: &HashMap<String, &Remote>, state: &mut BTreeMap<String, Entry>, _cfg: &Config) -> anyhow::Result<bool> {
         let path = |rel: &str| m.local.join(rel);
         let name_of = |rel: &str| rel.rsplit('/').next().unwrap_or(rel).to_string();
-        let parent_of = |rel: &str| rel.rfind('/').map(|i| rel[..i].to_string()).unwrap_or_default();
         let record_local = |state: &mut BTreeMap<String, Entry>, rel: &str, item_id: &str, updated: &str, dir: bool| -> anyhow::Result<()> {
             let md = std::fs::metadata(path(rel))?;
             state.insert(plan::key(rel), Entry { rel: rel.into(), dir, item_id: item_id.into(), size: if dir { 0 } else { md.len() }, mtime: if dir { 0 } else { mtime_of(&md) }, updated: updated.into() });
@@ -517,44 +600,60 @@ impl Engine {
                 self.push_recent(&name_of(rel), "trash", &format!("/{}", m.remote)).await;
                 Ok(true)
             }
-            Action::Download { rel, item_id, size } => {
-                self.set_current(Some(Current { remote: m.remote.clone(), name: name_of(rel), dir: "down".into(), path: format!("/{}/{} → {}", m.remote, parent_of(rel), m.local.join(parent_of(rel)).display()), done: 0, total: *size })).await;
-                let p = path(rel);
-                if p.exists() {
-                    // ältere lokale Fassung nicht überschreiben, sondern in den Papierkorb
-                    let _ = trash::delete(&p);
-                }
-                self.api.download(item_id, &p, &self.progress).await?;
-                let r = remote.get(&plan::key(rel)).ok_or_else(|| anyhow::anyhow!("weg"))?;
-                record_local(state, rel, &r.item_id, &r.updated, false)?;
-                self.push_recent(&name_of(rel), "down", &shorten(&m.local.join(parent_of(rel)))).await;
-                Ok(true)
-            }
-            Action::Conflict { rel, item_id, size } => {
+            Action::Download { .. } | Action::Conflict { .. } | Action::Upload { .. } => Ok(false),
+        }
+    }
+
+    /// Eine Übertragung (Download, Konflikt, Upload); gibt den neuen Stand für die Datei zurück
+    async fn transfer(&self, a: &Action, m: &Mapping, parents: &HashMap<String, String>, remote: &HashMap<String, &Remote>, limit: u64) -> anyhow::Result<Option<Entry>> {
+        let path = |rel: &str| m.local.join(rel);
+        let name_of = |rel: &str| rel.rsplit('/').next().unwrap_or(rel).to_string();
+        let parent_of = |rel: &str| rel.rfind('/').map(|i| rel[..i].to_string()).unwrap_or_default();
+        let entry_local = |rel: &str, item_id: &str, updated: &str| -> anyhow::Result<Entry> {
+            let md = std::fs::metadata(path(rel))?;
+            Ok(Entry { rel: rel.into(), dir: false, item_id: item_id.into(), size: md.len(), mtime: mtime_of(&md), updated: updated.into() })
+        };
+        match a {
+            Action::Download { rel, item_id, size } | Action::Conflict { rel, item_id, size } => {
+                let conflict = matches!(a, Action::Conflict { .. });
                 let copy = plan::conflict_name(rel, &today());
-                std::fs::rename(path(rel), path(&copy))?;
-                self.set_current(Some(Current { remote: m.remote.clone(), name: name_of(rel), dir: "down".into(), path: format!("/{}/{}", m.remote, parent_of(rel)), done: 0, total: *size })).await;
-                self.api.download(item_id, &path(rel), &self.progress).await?;
-                let r = remote.get(&plan::key(rel)).ok_or_else(|| anyhow::anyhow!("weg"))?;
-                record_local(state, rel, &r.item_id, &r.updated, false)?;
-                self.push_recent(&name_of(&copy), "conflict", &shorten(&m.local.join(parent_of(rel)))).await;
-                Ok(true)
+                if conflict {
+                    std::fs::rename(path(rel), path(&copy))?;
+                } else if path(rel).exists() {
+                    // ältere lokale Fassung nicht überschreiben, sondern in den Papierkorb
+                    let _ = trash::delete(path(rel));
+                }
+                let (id, prog) = self.begin(Current { remote: m.remote.clone(), name: name_of(rel), dir: "down".into(), path: format!("/{}/{} → {}", m.remote, parent_of(rel), shorten(&m.local.join(parent_of(rel)))), done: 0, total: *size }).await;
+                let r = self.api.download(item_id, &path(rel), &prog).await;
+                self.end(id).await;
+                r?;
+                let re = remote.get(&plan::key(rel)).ok_or_else(|| anyhow::anyhow!("weg"))?;
+                let e = entry_local(rel, &re.item_id, &re.updated)?;
+                if conflict {
+                    self.push_recent(&name_of(&copy), "conflict", &shorten(&m.local.join(parent_of(rel)))).await;
+                } else {
+                    self.push_recent(&name_of(rel), "down", &shorten(&m.local.join(parent_of(rel)))).await;
+                }
+                Ok(Some(e))
             }
             Action::Upload { rel, size, replace } => {
                 let p = path(rel);
                 let before = std::fs::metadata(&p)?;
-                self.set_current(Some(Current { remote: m.remote.clone(), name: name_of(rel), dir: "up".into(), path: format!("{} → /{}/{}", shorten(&m.local.join(parent_of(rel))), m.remote, parent_of(rel)), done: 0, total: *size })).await;
-                let parent = self.ensure_remote(&parent_of(rel), folders).await?;
-                self.api.upload(&p, &name_of(rel), &parent, replace.as_deref(), cfg.upload_limit, &self.progress).await?;
+                let parent = parents.get(&parent_of(rel)).ok_or_else(|| anyhow::anyhow!("Zielordner fehlt"))?;
+                let (id, prog) = self.begin(Current { remote: m.remote.clone(), name: name_of(rel), dir: "up".into(), path: format!("{} → /{}/{}", shorten(&m.local.join(parent_of(rel))), m.remote, parent_of(rel)), done: 0, total: *size }).await;
+                let r = self.api.upload(&p, &name_of(rel), parent, replace.as_deref(), limit, &prog).await;
+                self.end(id).await;
+                r?;
+                self.push_recent(&name_of(rel), "up", format!("/{}/{}", m.remote, parent_of(rel)).trim_end_matches('/')).await;
                 // während des Uploads geändert: Stand nicht merken, nächster Lauf lädt die neue Fassung
                 let after = std::fs::metadata(&p)?;
                 if mtime_of(&after) == mtime_of(&before) && after.len() == before.len() {
-                    // updatedAt kennt erst der nächste Baum: leer lassen, wird nach dem Lauf nachgetragen
-                    state.insert(plan::key(rel), Entry { rel: rel.clone(), dir: false, item_id: String::new(), size: after.len(), mtime: mtime_of(&after), updated: String::new() });
+                    // itemId/updatedAt kennt erst der nächste Baum: leer lassen, wird nach dem Lauf nachgetragen
+                    return Ok(Some(Entry { rel: rel.clone(), dir: false, item_id: String::new(), size: after.len(), mtime: mtime_of(&after), updated: String::new() }));
                 }
-                self.push_recent(&name_of(rel), "up", &format!("/{}/{}", m.remote, parent_of(rel)).trim_end_matches('/').to_string()).await;
-                Ok(true)
+                Ok(None)
             }
+            _ => Ok(None),
         }
     }
 
