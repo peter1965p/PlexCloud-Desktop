@@ -1,6 +1,6 @@
 [package]
 name = "plexcloud-desktop"
-version = "0.1.0"
+version = "0.1.1"
 description = "PlexCloud für Linux: Cloud-Ordner in den echten Systemordnern"
 authors = ["Peter Päffgen"]
 license = "MIT"
