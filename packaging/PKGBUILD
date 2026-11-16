@@ -11,7 +11,7 @@ depends=('webkit2gtk-4.1' 'gtk3' 'libayatana-appindicator' 'xdg-user-dirs' 'xdg-
 provides=('plexcloud-desktop')
 conflicts=('plexcloud-desktop')
 source=("$url/releases/download/v$pkgver/plexcloud-desktop-$pkgver-x86_64.tar.gz")
-sha256sums=('SKIP')
+sha256sums=('dfea29ef048c240be2735f000398fec6bc4c633d511e3dbf75def1cb0560fd66')
 
 package() {
   install -Dm755 plexcloud-desktop "$pkgdir/usr/bin/plexcloud-desktop"
