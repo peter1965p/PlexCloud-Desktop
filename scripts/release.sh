@@ -54,5 +54,10 @@ git tag -a "$TAG" -m "PlexCloud Desktop $VERSION"
 git push -q origin HEAD --follow-tags
 
 echo "▶ GitHub-Release"
+NOTES="$NOTES
+
+---
+**Windows:** \`PlexCloud_${VERSION}_x64-setup.exe\` (erscheint ca. 15 Minuten nach diesem Release). Beim ersten Start meldet Windows „Der Computer wurde durch Windows geschützt“: auf **Weitere Informationen** → **Trotzdem ausführen** klicken. Die App ist noch nicht mit einem gekauften Zertifikat signiert. Updates kommen danach ohne Nachfrage.
+**Linux:** \`install.sh\` oder PKGBUILD, siehe README."
 gh release create "$TAG" "$OUT" "$OUT.sha256" packaging/PKGBUILD scripts/install.sh --title "PlexCloud Desktop $VERSION" --notes "$NOTES"
 echo "✅ PlexCloud Desktop $VERSION ist veröffentlicht."
