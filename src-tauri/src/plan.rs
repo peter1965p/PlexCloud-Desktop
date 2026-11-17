@@ -208,6 +208,15 @@ pub fn month_to_year(name: &str) -> Option<&str> {
     (b.len() == 7 && b[4] == b'-' && b.iter().enumerate().all(|(i, c)| i == 4 || c.is_ascii_digit())).then(|| &name.trim()[..4])
 }
 
+/// Darf dieser Pfad unter Windows angelegt werden? (verbotene Zeichen, reservierte Namen, Punkt/Leerzeichen am Ende)
+pub fn windows_ok(rel: &str) -> bool {
+    rel.split('/').all(|seg| {
+        let stem = seg.split('.').next().unwrap_or("").trim_end().to_ascii_uppercase();
+        let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL") || (stem.len() == 4 && (stem.starts_with("COM") || stem.starts_with("LPT")) && stem.as_bytes()[3].is_ascii_digit());
+        !seg.is_empty() && !reserved && !seg.ends_with('.') && !seg.ends_with(' ') && !seg.chars().any(|c| matches!(c, '<' | '>' | ':' | '"' | '\\' | '|' | '?' | '*') || (c as u32) < 32)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -306,5 +315,14 @@ mod tests {
         assert_eq!(month_to_year("2026-11"), Some("2026"));
         assert_eq!(month_to_year("2026"), None);
         assert_eq!(month_to_year("Urlaub-11"), None);
+    }
+
+    #[test]
+    fn windows_names() {
+        assert!(windows_ok("2026/IMG_1.jpg"));
+        assert!(!windows_ok("2026/a:b.txt"));
+        assert!(!windows_ok("CON.txt"));
+        assert!(!windows_ok("ordner./x"));
+        assert!(windows_ok("Konsole.txt"));
     }
 }

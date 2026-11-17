@@ -99,7 +99,7 @@ async function saveEdit(r: string, enabled: boolean) {
   <div class="facts">
     <div class="card fact"><b>Unterordner wie in der Cloud</b><span>/Bilder/2026 in der Cloud ist ~/Bilder/2026 auf dem Rechner. Struktur 1 : 1, nichts wird umsortiert.</span></div>
     <div class="card fact"><b>Echte Dateien, kein Platzhalter</b><span>Dolphin, GIMP und LibreOffice sehen normale Dateien.</span></div>
-    <div class="card fact"><b>Gelöscht heißt Papierkorb</b><span>Lokal gelöscht: in der Cloud in den Papierkorb (30 Tage). In der Cloud gelöscht: lokal in den KDE-Papierkorb.</span></div>
+    <div class="card fact"><b>Gelöscht heißt Papierkorb</b><span>Lokal gelöscht: in der Cloud in den Papierkorb (30 Tage). In der Cloud gelöscht: lokal in den Papierkorb des Systems.</span></div>
   </div>
 </template>
 

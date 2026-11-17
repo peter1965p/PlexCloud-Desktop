@@ -39,7 +39,7 @@ impl Default for Config {
             mappings: vec![m("Bilder", d.pictures), m("Videos", d.videos), m("Dokumente", d.documents)],
             paused: false,
             upload_limit: 0,
-            excludes: vec![".cache".into(), "node_modules".into(), ".git".into(), "*.tmp".into(), "*.part".into(), "~$*".into(), ".~lock.*".into(), ".directory".into()],
+            excludes: vec![".cache".into(), "node_modules".into(), ".git".into(), "*.tmp".into(), "*.part".into(), "~$*".into(), ".~lock.*".into(), ".directory".into(), "desktop.ini".into(), "Thumbs.db".into()],
             autostart: true,
             auto_update: true,
             interval: 120,
@@ -76,13 +76,17 @@ impl Config {
 /// Datei atomar schreiben, nur für den Benutzer lesbar (Tokens, Einstellungen)
 pub fn write_private(path: &Path, data: &[u8]) -> anyhow::Result<()> {
     use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
     if let Some(p) = path.parent() {
         std::fs::create_dir_all(p)?;
     }
     let tmp = path.with_extension("tmp");
     {
-        let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&tmp)?;
+        let mut o = std::fs::OpenOptions::new();
+        o.write(true).create(true).truncate(true);
+        // Windows: %APPDATA% gehört ohnehin nur dem Benutzer
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600);
+        let mut f = o.open(&tmp)?;
         f.write_all(data)?;
         f.sync_all()?;
     }
@@ -98,12 +102,21 @@ pub struct UserDirs {
 }
 
 impl UserDirs {
+    /// Windows: die bekannten Ordner (Bilder, Videos, Dokumente; auch wenn sie z. B. auf D:\ verschoben wurden)
+    #[cfg(windows)]
+    pub fn load() -> UserDirs {
+        let h = home();
+        UserDirs { pictures: dirs::picture_dir().unwrap_or_else(|| h.join("Pictures")), videos: dirs::video_dir().unwrap_or_else(|| h.join("Videos")), documents: dirs::document_dir().unwrap_or_else(|| h.join("Documents")) }
+    }
+
+    #[cfg(not(windows))]
     pub fn load() -> UserDirs {
         let h = home();
         let text = std::fs::read_to_string(dirs::config_dir().unwrap_or_else(|| h.join(".config")).join("user-dirs.dirs")).unwrap_or_default();
         Self::parse(&text, &h)
     }
 
+    #[cfg_attr(windows, allow(dead_code))]
     pub fn parse(text: &str, home: &Path) -> UserDirs {
         let get = |key: &str, fallback: &str| -> PathBuf {
             for line in text.lines() {
@@ -126,6 +139,7 @@ impl UserDirs {
 mod tests {
     use super::*;
 
+    #[cfg(not(windows))]
     #[test]
     fn user_dirs_from_file() {
         let h = Path::new("/home/p");

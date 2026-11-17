@@ -89,7 +89,7 @@ async function logout() {
     <section class="card sec">
       <h2>Abgleich</h2>
       <div class="opt">
-        <div style="flex: 1"><div>Beim Anmelden starten</div><div class="small muted">systemd-Benutzerdienst</div></div>
+        <div style="flex: 1"><div>Beim Anmelden starten</div><div class="small muted">{{ view.platform === "windows" ? "Windows-Autostart" : "systemd-Benutzerdienst" }}</div></div>
         <button class="switch" :class="{ on: autostart }" role="switch" :aria-checked="autostart" aria-label="Beim Anmelden starten" @click="autostart = !autostart; save()" />
       </div>
       <div class="opt">

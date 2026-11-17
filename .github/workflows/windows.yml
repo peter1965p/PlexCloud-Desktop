@@ -1,0 +1,68 @@
+# Baut PlexCloud für Windows und hängt es an das GitHub-Release (das Linux-Release legt scripts/release.sh an).
+# Anlagen: PlexCloud_<v>_x64-setup.exe (Installer, ohne Adminrechte) und
+# plexcloud-desktop-<v>-windows-x86_64.exe(.sha256) für das Selbst-Update.
+name: Windows
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      - name: Tests
+        working-directory: src-tauri
+        run: cargo test --lib
+
+      - name: Build
+        run: npx tauri build
+
+      - name: Pakete
+        shell: bash
+        run: |
+          set -euo pipefail
+          V="$(grep -m1 '^version' src-tauri/Cargo.toml | cut -d'"' -f2)"
+          if [[ "$GITHUB_REF_TYPE" == "tag" && "$GITHUB_REF_NAME" != "v$V" ]]; then echo "Tag $GITHUB_REF_NAME passt nicht zu Version $V"; exit 1; fi
+          mkdir out
+          cp src-tauri/target/release/plexcloud-desktop.exe "out/plexcloud-desktop-$V-windows-x86_64.exe"
+          cp src-tauri/target/release/bundle/nsis/*-setup.exe out/
+          (cd out && sha256sum "plexcloud-desktop-$V-windows-x86_64.exe" > "plexcloud-desktop-$V-windows-x86_64.exe.sha256")
+          ls -l out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plexcloud-windows
+          path: out/*
+
+      - name: An das Release hängen
+        if: github.ref_type == 'tag'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 30); do gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 && break; sleep 20; done
+          # Setup zuerst, Selbst-Update-Paket zuletzt: installierte Apps sehen das Update erst, wenn alles da ist
+          gh release upload "$GITHUB_REF_NAME" out/*-setup.exe --clobber
+          gh release upload "$GITHUB_REF_NAME" out/*-windows-x86_64.exe --clobber
+          gh release upload "$GITHUB_REF_NAME" out/*.sha256 --clobber

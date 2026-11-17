@@ -13,7 +13,7 @@ export interface Status {
 export interface Mapping { remote: string; local: string; enabled: boolean; approved: boolean }
 export interface Config { accent: string; mappings: Mapping[]; paused: boolean; upload_limit: number; excludes: string[]; autostart: boolean; auto_update: boolean; interval: number }
 export interface Profile { name: string; email: string; picture: string | null; provider: string }
-export interface View { status: Status; profile: Profile | null; config: Config; version: string; update: { version: string; url: string; self_update: boolean } | null }
+export interface View { status: Status; profile: Profile | null; config: Config; version: string; platform: string; update: { version: string; url: string; self_update: boolean } | null }
 
 export const api = {
   view: () => invoke<View>("view"),
@@ -51,7 +51,7 @@ export function ago(sec: number): string {
 }
 
 export function home(p: string): string {
-  return p.replace(/^\/home\/[^/]+/, "~");
+  return p.replace(/^\/home\/[^/]+/, "~").replace(/^[A-Za-z]:\\Users\\[^\\]+/, "~");
 }
 
 /** Akzentfarbe als CSS-Variablen setzen (inkl. hellerer Variante und Schrift auf dem Knopf) */

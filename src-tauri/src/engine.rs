@@ -116,8 +116,18 @@ fn save_state(remote: &str, s: &BTreeMap<String, Entry>) -> anyhow::Result<()> {
 }
 
 pub fn mtime_of(m: &std::fs::Metadata) -> i64 {
-    use std::os::unix::fs::MetadataExt;
-    m.mtime() * 1000 + m.mtime_nsec() / 1_000_000
+    m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as i64).unwrap_or(0)
+}
+
+/// Relativer Pfad immer mit „/“ (wie in der Cloud), auch unter Windows
+pub fn rel_path(p: &Path, root: &Path) -> Option<String> {
+    let parts: Option<Vec<&str>> = p.strip_prefix(root).ok()?.components().map(|c| c.as_os_str().to_str()).collect();
+    Some(parts?.join("/"))
+}
+
+/// Lokaler Pfad zu einem relativen Cloud-Pfad
+pub fn local_path(root: &Path, rel: &str) -> PathBuf {
+    rel.split('/').filter(|s| !s.is_empty()).fold(root.to_path_buf(), |p, s| p.join(s))
 }
 
 /// Lokalen Ordner lesen; Dateien, die gerade noch geschrieben werden (jünger als 3 s), bleiben bis zum nächsten Lauf liegen
@@ -126,11 +136,11 @@ pub fn scan_local(root: &Path, excludes: &[String]) -> Vec<Local> {
     let fresh = (now() as i64 - 3) * 1000;
     let mut seen = std::collections::HashSet::new();
     for e in walkdir::WalkDir::new(root).follow_links(false).min_depth(1).into_iter().filter_entry(|e| {
-        let rel = e.path().strip_prefix(root).ok().and_then(|p| p.to_str()).unwrap_or("");
-        !plan::excluded(rel, excludes)
+        let rel = rel_path(e.path(), root).unwrap_or_default();
+        !plan::excluded(&rel, excludes)
     }) {
         let Ok(e) = e else { continue };
-        let Some(rel) = e.path().strip_prefix(root).ok().and_then(|p| p.to_str()).map(String::from) else { continue };
+        let Some(rel) = rel_path(e.path(), root) else { continue };
         let ft = e.file_type();
         if ft.is_symlink() || !(ft.is_file() || ft.is_dir()) {
             continue;
@@ -402,7 +412,11 @@ impl Engine {
         }
         let state = load_state(&m.remote);
         let top = top_folder(tree, &m.remote);
-        let remote = top.map(|t| remote_under(tree, &t.item_id)).unwrap_or_default();
+        let mut remote = top.map(|t| remote_under(tree, &t.item_id)).unwrap_or_default();
+        // Windows kennt manche Namen nicht (z. B. „a:b.txt“ vom Handy): diese bleiben nur in der Cloud
+        if cfg!(windows) {
+            remote.retain(|r| plan::windows_ok(&r.rel));
+        }
         let local = scan_local(&m.local, &cfg.excludes);
         let actions = plan::plan(&local, &remote, &state);
         let pending = summarize(&actions);
@@ -553,7 +567,7 @@ impl Engine {
 
     #[allow(clippy::too_many_arguments)]
     async fn apply(&self, a: &Action, m: &Mapping, _top: &str, folders: &mut HashMap<String, String>, remote: &HashMap<String, &Remote>, state: &mut BTreeMap<String, Entry>, _cfg: &Config) -> anyhow::Result<bool> {
-        let path = |rel: &str| m.local.join(rel);
+        let path = |rel: &str| local_path(&m.local, rel);
         let name_of = |rel: &str| rel.rsplit('/').next().unwrap_or(rel).to_string();
         let record_local = |state: &mut BTreeMap<String, Entry>, rel: &str, item_id: &str, updated: &str, dir: bool| -> anyhow::Result<()> {
             let md = std::fs::metadata(path(rel))?;
@@ -606,7 +620,7 @@ impl Engine {
 
     /// Eine Übertragung (Download, Konflikt, Upload); gibt den neuen Stand für die Datei zurück
     async fn transfer(&self, a: &Action, m: &Mapping, parents: &HashMap<String, String>, remote: &HashMap<String, &Remote>, limit: u64) -> anyhow::Result<Option<Entry>> {
-        let path = |rel: &str| m.local.join(rel);
+        let path = |rel: &str| local_path(&m.local, rel);
         let name_of = |rel: &str| rel.rsplit('/').next().unwrap_or(rel).to_string();
         let parent_of = |rel: &str| rel.rfind('/').map(|i| rel[..i].to_string()).unwrap_or_default();
         let entry_local = |rel: &str, item_id: &str, updated: &str| -> anyhow::Result<Entry> {
@@ -623,16 +637,16 @@ impl Engine {
                     // ältere lokale Fassung nicht überschreiben, sondern in den Papierkorb
                     let _ = trash::delete(path(rel));
                 }
-                let (id, prog) = self.begin(Current { remote: m.remote.clone(), name: name_of(rel), dir: "down".into(), path: format!("/{}/{} → {}", m.remote, parent_of(rel), shorten(&m.local.join(parent_of(rel)))), done: 0, total: *size }).await;
+                let (id, prog) = self.begin(Current { remote: m.remote.clone(), name: name_of(rel), dir: "down".into(), path: format!("/{}/{} → {}", m.remote, parent_of(rel), shorten(&local_path(&m.local, &parent_of(rel)))), done: 0, total: *size }).await;
                 let r = self.api.download(item_id, &path(rel), &prog).await;
                 self.end(id).await;
                 r?;
                 let re = remote.get(&plan::key(rel)).ok_or_else(|| anyhow::anyhow!("weg"))?;
                 let e = entry_local(rel, &re.item_id, &re.updated)?;
                 if conflict {
-                    self.push_recent(&name_of(&copy), "conflict", &shorten(&m.local.join(parent_of(rel)))).await;
+                    self.push_recent(&name_of(&copy), "conflict", &shorten(&local_path(&m.local, &parent_of(rel)))).await;
                 } else {
-                    self.push_recent(&name_of(rel), "down", &shorten(&m.local.join(parent_of(rel)))).await;
+                    self.push_recent(&name_of(rel), "down", &shorten(&local_path(&m.local, &parent_of(rel)))).await;
                 }
                 Ok(Some(e))
             }
@@ -640,7 +654,7 @@ impl Engine {
                 let p = path(rel);
                 let before = std::fs::metadata(&p)?;
                 let parent = parents.get(&parent_of(rel)).ok_or_else(|| anyhow::anyhow!("Zielordner fehlt"))?;
-                let (id, prog) = self.begin(Current { remote: m.remote.clone(), name: name_of(rel), dir: "up".into(), path: format!("{} → /{}/{}", shorten(&m.local.join(parent_of(rel))), m.remote, parent_of(rel)), done: 0, total: *size }).await;
+                let (id, prog) = self.begin(Current { remote: m.remote.clone(), name: name_of(rel), dir: "up".into(), path: format!("{} → /{}/{}", shorten(&local_path(&m.local, &parent_of(rel))), m.remote, parent_of(rel)), done: 0, total: *size }).await;
                 let r = self.api.upload(&p, &name_of(rel), parent, replace.as_deref(), limit, &prog).await;
                 self.end(id).await;
                 r?;
@@ -684,7 +698,7 @@ fn strip_copy(name: &str) -> String {
 fn shorten(p: &Path) -> String {
     let h = crate::config::home();
     match p.strip_prefix(&h) {
-        Ok(r) => format!("~/{}", r.display()).trim_end_matches('/').to_string(),
+        Ok(r) => format!("~/{}", r.to_string_lossy().replace('\\', "/")).trim_end_matches('/').to_string(),
         Err(_) => p.display().to_string(),
     }
 }
@@ -727,6 +741,13 @@ mod tests {
         let rels: Vec<&str> = l.iter().map(|x| x.rel.as_str()).collect();
         assert_eq!(rels, vec!["2026", "2026/a.jpg"]);
         assert_eq!(l[1].size, 5);
+    }
+
+    #[test]
+    fn rel_paths_use_slashes() {
+        let root = Path::new("base");
+        assert_eq!(rel_path(&root.join("2026").join("a.jpg"), root).as_deref(), Some("2026/a.jpg"));
+        assert_eq!(local_path(root, "2026/a.jpg"), root.join("2026").join("a.jpg"));
     }
 
     #[test]

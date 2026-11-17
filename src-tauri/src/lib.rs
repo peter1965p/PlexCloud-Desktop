@@ -1,4 +1,4 @@
-//! PlexCloud für Linux: Fenster, Tray-Symbol, Hintergrund-Abgleich und die Befehle für die Oberfläche.
+//! PlexCloud für Linux und Windows: Fenster, Tray-Symbol, Hintergrund-Abgleich und die Befehle für die Oberfläche.
 
 mod api;
 mod auth;
@@ -36,6 +36,8 @@ struct View {
     profile: Option<auth::Profile>,
     config: Config,
     version: &'static str,
+    /// "linux" oder "windows"
+    platform: &'static str,
     update: Option<UpdateInfo>,
 }
 
@@ -48,7 +50,7 @@ async fn view(app: State<'_, App>) -> Result<View, String> {
     let mut status = app.engine.snapshot().await;
     status.signed_in = app.engine.api.auth.signed_in().await;
     status.paused = Config::load().paused;
-    Ok(View { status, profile: app.engine.api.auth.profile().await, config: Config::load(), version: env!("CARGO_PKG_VERSION"), update: app.update.lock().await.clone() })
+    Ok(View { status, profile: app.engine.api.auth.profile().await, config: Config::load(), version: env!("CARGO_PKG_VERSION"), platform: std::env::consts::OS, update: app.update.lock().await.clone() })
 }
 
 #[tauri::command]
@@ -193,7 +195,26 @@ fn expand(p: &str) -> std::path::PathBuf {
     }
 }
 
+/// Autostart unter Windows: Eintrag unter HKCU\\…\\Run (wie OneDrive, ohne Adminrechte)
+#[cfg(windows)]
+fn autostart(on: bool) -> anyhow::Result<()> {
+    use std::os::windows::process::CommandExt;
+    const NO_WINDOW: u32 = 0x0800_0000;
+    let key = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
+    let mut c = std::process::Command::new("reg");
+    if on {
+        let exe = std::env::current_exe()?;
+        c.args(["add", key, "/v", "PlexCloud", "/t", "REG_SZ", "/f", "/d"]).arg(format!("\"{}\" --hidden", exe.display()));
+    } else {
+        c.args(["delete", key, "/v", "PlexCloud", "/f"]);
+    }
+    let st = c.creation_flags(NO_WINDOW).status()?;
+    anyhow::ensure!(st.success() || !on, "Autostart konnte nicht eingetragen werden");
+    Ok(())
+}
+
 /// Autostart als systemd-Benutzerdienst, gebunden an die grafische Sitzung (Plasma)
+#[cfg(not(windows))]
 fn autostart(on: bool) -> anyhow::Result<()> {
     let unit_dir = dirs::config_dir().unwrap_or_default().join("systemd/user");
     let unit = unit_dir.join("plexcloud.service");
@@ -278,6 +299,11 @@ pub fn run() {
         return;
     }
     let hidden = std::env::args().any(|a| a == "--hidden");
+    // nach einem Neustart (Update, schlanker Neustart): warten, bis die alte Instanz weg ist
+    if std::env::args().any(|a| a == "--after-restart") {
+        std::thread::sleep(Duration::from_millis(1500));
+    }
+    update::cleanup();
     let http = reqwest::Client::builder().connect_timeout(Duration::from_secs(15)).build().expect("HTTP-Client");
     let auth = Arc::new(auth::Auth::new(http.clone()));
     let engine = Arc::new(Engine::new(Arc::new(api::Api::new(auth, http.clone()))));
