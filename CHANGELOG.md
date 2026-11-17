@@ -1,6 +1,13 @@
 # Changelog
 
-Alle Versionen von PlexCloud für Linux.
+Alle Versionen von PlexCloud Desktop (Linux und Windows).
+
+## [0.2.0] - 2026-11-17
+
+- Neu: PlexCloud für Windows 10/11 (Beta). Bilder, Videos und Dokumente landen in den echten Windows-Ordnern, auch wenn diese verschoben wurden (z. B. auf D:\). Installer ohne Adminrechte, Autostart mit Windows, Selbst-Update wie unter Linux
+- Windows: Dateien mit Namen, die Windows nicht erlaubt (z. B. „a:b.txt“), bleiben nur in der Cloud; gelöscht wird dabei nichts. desktop.ini und Thumbs.db werden nicht hochgeladen
+- Updates erscheinen erst, wenn das Paket für das eigene System im Release liegt
+- Linux: keine Änderung am Abgleich
 
 ## [0.1.1] - 2026-11-16
 
